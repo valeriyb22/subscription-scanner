@@ -1,0 +1,250 @@
+function analyzeCSV(csvText) {
+    const lines = csvText.split('\n').filter(line => line.trim());
+    if (lines.length < 2) {
+        throw new Error('Файл пуст или имеет неверный формат');
+    }
+    
+    const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+    
+    const dateIndex = headers.findIndex(h => 
+        ['date', 'дата', 'transaction_date', 'дата операции', 'дата платежа'].includes(h)
+    );
+    const amountIndex = headers.findIndex(h => 
+        ['amount', 'сумма', 'transaction_amount', 'сумма операции', 'сумма платежа'].includes(h)
+    );
+    const descIndex = headers.findIndex(h => 
+        ['description', 'описание', 'merchant', 'назначение', 'получатель', 'наименование', 'категория'].includes(h)
+    );
+    
+    if (dateIndex === -1 || amountIndex === -1) {
+        throw new Error('Не найдены обязательные колонки: дата и сумма');
+    }
+    
+    // Категории, которые НЕ являются подписками
+    const nonSubscriptionKeywords = [
+        'продукты', 'супермаркет', 'магазин', 'пятерочка', 'магнит', 'перекресток',
+        'азс', 'бензин', 'топливо', 'лукойл', 'роснефть',
+        'кафе', 'ресторан', 'макдональдс', 'starbucks', 'кофе',
+        'такси', 'uber', 'яндекс такси', 'ситимобил',
+        'аптека', 'лекарства', 'здоровье',
+        'перевод', 'сбербанк онлайн', 'тинькофф',
+        'банкомат', 'снятие наличных', 'cash',
+        'жкх', 'коммунальные', 'электроэнергия', 'вода', 'газ',
+        'зарплата', 'пенсия', 'стипендия',
+        'возврат', 'cashback', 'кэшбэк'
+    ];
+    
+    function isSubscriptionLike(description) {
+        const descLower = description.toLowerCase();
+        for (const keyword of nonSubscriptionKeywords) {
+            if (descLower.includes(keyword)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    
+    const transactions = [];
+    let totalAmount = 0;
+    
+    for (let i = 1; i < lines.length; i++) {
+        const values = lines[i].split(',').map(v => v.trim());
+        if (values.length <= Math.max(dateIndex, amountIndex)) continue;
+        
+        const date = new Date(values[dateIndex]);
+        const amount = parseFloat(values[amountIndex].replace(',', '.'));
+        const description = descIndex !== -1 ? values[descIndex] : 'Транзакция';
+        
+        if (!isNaN(date.getTime()) && !isNaN(amount) && amount > 0) {
+            transactions.push({
+                date,
+                amount,
+                description: normalizeMerchant(description),
+                isSubscriptionLike: isSubscriptionLike(description)
+            });
+            totalAmount += amount;
+        }
+    }
+    
+    if (transactions.length === 0) {
+        throw new Error('Не удалось распознать транзакции');
+    }
+    
+    // Фильтруем только те, что похожи на подписки
+    const subscriptionTransactions = transactions.filter(t => t.isSubscriptionLike);
+    
+    const grouped = {};
+    subscriptionTransactions.forEach(t => {
+        if (!grouped[t.description]) {
+            grouped[t.description] = [];
+        }
+        grouped[t.description].push(t);
+    });
+    
+    const subscriptions = [];
+    Object.entries(grouped).forEach(([merchant, trans]) => {
+        if (trans.length < 2) return;
+        
+        trans.sort((a, b) => a.date - b.date);
+        
+        const intervals = [];
+        for (let i = 1; i < trans.length; i++) {
+            const days = (trans[i].date - trans[i-1].date) / (1000 * 60 * 60 * 24);
+            intervals.push(days);
+        }
+        
+        const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+        const amounts = trans.map(t => t.amount);
+        const avgAmount = amounts.reduce((a, b) => a + b, 0) / amounts.length;
+        
+        let frequency, monthlyAmount, yearlyAmount;
+        let isSubscription = false;
+        
+        // Более строгие критерии
+        if (avgInterval >= 28 && avgInterval <= 32) {
+            isSubscription = true;
+            frequency = 'monthly';
+            monthlyAmount = avgAmount;
+            yearlyAmount = monthlyAmount * 12;
+        } else if (avgInterval >= 360 && avgInterval <= 370) {
+            isSubscription = true;
+            frequency = 'yearly';
+            yearlyAmount = avgAmount;
+            monthlyAmount = yearlyAmount / 12;
+        } else if (avgInterval >= 6 && avgInterval <= 8) {
+            isSubscription = true;
+            frequency = 'weekly';
+            monthlyAmount = avgAmount * 4.33;
+            yearlyAmount = avgAmount * 52;
+        }
+        
+        if (!isSubscription) return;
+        
+        // Проверяем стабильность сумм (допуск 15%)
+        const stdDev = Math.sqrt(
+            amounts.reduce((sq, n) => sq + Math.pow(n - avgAmount, 2), 0) / amounts.length
+        );
+        
+        if (amounts.length > 2) {
+            const coefficientOfVariation = stdDev / avgAmount;
+            if (coefficientOfVariation > 0.15) return;
+        }
+        
+        // Проверяем разброс
+        const minAmount = Math.min(...amounts);
+        const maxAmount = Math.max(...amounts);
+        
+        if (maxAmount / minAmount > 1.3) return;
+        
+        subscriptions.push({
+            merchant,
+            frequency,
+            monthlyAmount: Math.round(monthlyAmount * 100) / 100,
+            yearlyAmount: Math.round(yearlyAmount * 100) / 100,
+            transactions: trans.length,
+            lastPayment: trans[trans.length - 1].date.toISOString().split('T')[0],
+            avgAmount: Math.round(avgAmount * 100) / 100
+        });
+    });
+    
+    subscriptions.sort((a, b) => b.yearlyAmount - a.yearlyAmount);
+    
+    const totalMonthly = subscriptions.reduce((sum, s) => sum + s.monthlyAmount, 0);
+    const totalYearly = subscriptions.reduce((sum, s) => sum + s.yearlyAmount, 0);
+    
+    const dates = transactions.map(t => t.date);
+    const minDate = new Date(Math.min(...dates));
+    const maxDate = new Date(Math.max(...dates));
+    
+    return {
+        subscriptions,
+        totalMonthly: Math.round(totalMonthly * 100) / 100,
+        totalYearly: Math.round(totalYearly * 100) / 100,
+        count: subscriptions.length,
+        totalTransactions: transactions.length,
+        totalAmount: Math.round(totalAmount * 100) / 100,
+        period: {
+            from: minDate.toISOString().split('T')[0],
+            to: maxDate.toISOString().split('T')[0]
+        }
+    };
+}
+
+function showResults(result) {
+    document.getElementById('loadingSection').style.display = 'none';
+    document.getElementById('resultsSection').style.display = 'block';
+    
+    document.getElementById('periodText').textContent = 
+        `Период: ${result.period.from} — ${result.period.to} • Всего транзакций: ${result.totalTransactions}`;
+    document.getElementById('totalMonthly').textContent = 
+        `${result.totalMonthly.toLocaleString('ru-RU')} ₽`;
+    document.getElementById('totalYearly').textContent = 
+        `${result.totalYearly.toLocaleString('ru-RU')} ₽`;
+    
+    const list = document.getElementById('subscriptionList');
+    list.innerHTML = '';
+    
+    if (result.count === 0) {
+        list.innerHTML = `
+            <div class="empty-state">
+                <div class="icon">🔍</div>
+                <p>Подписки не найдены</p>
+                <p style="font-size: 12px; margin-top: 10px;">
+                    Мы проанализировали ${result.totalTransactions} транзакций,<br>
+                    но не нашли регулярных платежей
+                </p>
+            </div>
+        `;
+    } else {
+        // Добавляем статистику
+        const statsHtml = `
+            <div style="background: var(--tg-theme-secondary-bg-color, #f5f5f5); padding: 15px; border-radius: 12px; margin-bottom: 20px;">
+                <div style="font-size: 14px; margin-bottom: 10px;">
+                    📊 <b>Общая сумма всех трат:</b> ${result.totalAmount.toLocaleString('ru-RU')} ₽
+                </div>
+                <div style="font-size: 14px;">
+                    💳 <b>Подписки составляют:</b> ${((result.totalYearly / result.totalAmount) * 100).toFixed(1)}% от всех расходов
+                </div>
+            </div>
+        `;
+        list.insertAdjacentHTML('beforeend', statsHtml);
+        
+        result.subscriptions.forEach(sub => {
+            const freqText = {
+                'monthly': 'мес',
+                'yearly': 'год',
+                'weekly': 'нед'
+            };
+            const freqEmoji = {
+                'monthly': '📅',
+                'yearly': '📆',
+                'weekly': '📋'
+            };
+            
+            const item = document.createElement('div');
+            item.className = 'subscription-item';
+            item.innerHTML = `
+                <div class="subscription-info">
+                    <div class="subscription-name">${sub.merchant}</div>
+                    <div class="subscription-details">
+                        ${freqEmoji[sub.frequency]} ${sub.avgAmount} ₽/${freqText[sub.frequency]} • 
+                        Платежей: ${sub.transactions} • 
+                        Последняя: ${sub.lastPayment}
+                    </div>
+                </div>
+                <div class="subscription-amount">
+                    <div class="amount-monthly">${sub.monthlyAmount.toLocaleString('ru-RU')} ₽/мес</div>
+                    <div class="amount-yearly">${sub.yearlyAmount.toLocaleString('ru-RU')} ₽/год</div>
+                </div>
+            `;
+            list.appendChild(item);
+        });
+    }
+    
+    tg.MainButton.setText('Поделиться результатами');
+    tg.MainButton.show();
+    tg.MainButton.onClick(() => {
+        const text = `Я потратил ${result.totalYearly.toLocaleString('ru-RU')} ₽ на подписки за год!`;
+        tg.sendData(text);
+    });
+}
