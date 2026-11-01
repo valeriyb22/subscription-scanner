@@ -120,7 +120,7 @@ function analyzeCSV(csvText) {
         
         if (!isSubscription) return;
         
-        // Проверяем стабильность сумм (допуск 15%)
+        // Проверяем стабильность сумм  (допуск 15%)
         const stdDev = Math.sqrt(
             amounts.reduce((sq, n) => sq + Math.pow(n - avgAmount, 2), 0) / amounts.length
         );
