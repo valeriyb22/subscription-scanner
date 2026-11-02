@@ -175,7 +175,7 @@ function showResults(result) {
     document.getElementById('resultsSection').style.display = 'block';
     
     document.getElementById('periodText').textContent = 
-        `Период: ${result.period.from} — ${result.period.to} • Всего транзакций: ${result.totalTransactions}`;
+        `Период: ${result.period.from} — ${result.period.to} • Всего транзакций!: ${result.totalTransactions}`;
     document.getElementById('totalMonthly').textContent = 
         `${result.totalMonthly.toLocaleString('ru-RU')} ₽`;
     document.getElementById('totalYearly').textContent = 
