@@ -70,7 +70,7 @@ function analyzeCSV(csvText) {
         throw new Error('Не удалось распознать транзакции');
     }
     
-    // Фильтруем только те, что похожи на подписки
+    // Фильтруем только те,  что похожи на подписки
     const subscriptionTransactions = transactions.filter(t => t.isSubscriptionLike);
     
     const grouped = {};
