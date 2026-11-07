@@ -67,7 +67,7 @@ function analyzeCSV(csvText) {
     }
     
     if (transactions.length === 0) {
-        throw new Error('Не удалось распознать транзакции');
+        throw new Error('Не уда лось распознать транзакции');
     }
     
     // Фильтруем только те,  что похожи на подписки
