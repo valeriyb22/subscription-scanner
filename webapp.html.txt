@@ -130,7 +130,7 @@ function analyzeCSV(csvText) {
             if (coefficientOfVariation > 0.15) return;
         }
         
-        // Проверяем разброс
+        // Проверяем  разброс
         const minAmount = Math.min(...amounts);
         const maxAmount = Math.max(...amounts);
         
